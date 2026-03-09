@@ -11,6 +11,44 @@
 let allAnalisi = []; // Tutte le analisi (campagne + monitoraggi) dell'utente
 
 // ===================================================
+// PROGRESS BAR — visibile nella sezione Analisi
+// ===================================================
+
+function showAnalisiProgress(title) {
+  const container = document.getElementById('analisi-progress');
+  if (!container) return;
+  container.classList.remove('hidden');
+  const titleEl = document.getElementById('analisi-progress-title');
+  if (titleEl) titleEl.textContent = title || 'Analisi in corso...';
+  updateAnalisiProgress(0, 1, 'Preparazione...');
+  // Nascondi lista e form
+  const list = document.getElementById('analisi-list');
+  if (list) list.classList.add('hidden');
+  const btn = document.getElementById('btn-new-analisi');
+  if (btn) btn.classList.add('hidden');
+}
+
+function updateAnalisiProgress(current, total, detail) {
+  const bar = document.getElementById('analisi-progress-bar');
+  const text = document.getElementById('analisi-progress-text');
+  const detailEl = document.getElementById('analisi-progress-detail');
+  const pct = total > 0 ? Math.round((current / total) * 100) : 0;
+  if (bar) bar.style.width = pct + '%';
+  if (text) text.textContent = `${current}/${total}`;
+  if (detailEl) detailEl.textContent = detail || '';
+}
+
+function hideAnalisiProgress() {
+  const container = document.getElementById('analisi-progress');
+  if (container) container.classList.add('hidden');
+  // Ripristina lista e bottone
+  const list = document.getElementById('analisi-list');
+  if (list) list.classList.remove('hidden');
+  const btn = document.getElementById('btn-new-analisi');
+  if (btn) btn.classList.remove('hidden');
+}
+
+// ===================================================
 // CARICAMENTO E LISTA ANALISI
 // ===================================================
 
@@ -484,13 +522,19 @@ async function createAnalisiCampagna(session, materia, etichetta, volume) {
 
     showToast(`Campagna "${volume.titolo}" creata! Generazione target in corso...`, 'success');
     hideAnalisiForm();
-    await loadAnalisi();
+
+    // Mostra barra di progresso nella sezione Analisi
+    showAnalisiProgress(`Campagna novita: ${volume.titolo}`);
+    updateAnalisiProgress(0, 1, 'Generazione target in corso — analisi dei programmi...');
 
     // Genera i target (delega a campagna.js)
     await generateTargets(data.id);
+
+    hideAnalisiProgress();
     // Ricarica per aggiornare lo stato
     await loadAnalisi();
   } catch (e) {
+    hideAnalisiProgress();
     showToast('Errore creazione campagna: ' + e.message, 'error');
   }
 }
@@ -532,6 +576,10 @@ async function createAnalisiMonitoraggio(session, materia, etichetta, volumi) {
     showToast(`Monitoraggio "${materia}" creato con ${volumi.length} volumi!`, 'success');
     hideAnalisiForm();
 
+    // Mostra barra di progresso nella sezione Analisi
+    showAnalisiProgress(`Monitoraggio disciplinare: ${materia}`);
+    updateAnalisiProgress(0, 1, `Avvio analisi di ${volumi.length} volumi...`);
+
     // Aggiorna allMonitoraggi per la generazione
     allMonitoraggi.unshift(data);
 
@@ -539,8 +587,11 @@ async function createAnalisiMonitoraggio(session, materia, etichetta, volumi) {
 
     // Avvia la generazione (delega a monitoraggio.js)
     await generaTargetMonitoraggio(data.id);
+
+    hideAnalisiProgress();
     await loadAnalisi();
   } catch (e) {
+    hideAnalisiProgress();
     showToast('Errore creazione monitoraggio: ' + e.message, 'error');
   }
 }

@@ -614,6 +614,11 @@ function updateMonProgress(current, total, detail) {
   if (bar) bar.style.width = pct + '%';
   if (text) text.textContent = `${current}/${total}`;
   if (detailEl && detail) detailEl.textContent = detail;
+
+  // Propaga anche al progress della sezione Analisi (se visibile)
+  if (typeof updateAnalisiProgress === 'function') {
+    updateAnalisiProgress(current, total, detail);
+  }
 }
 
 function hideMonProgress() {

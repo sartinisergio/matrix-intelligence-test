@@ -1170,6 +1170,11 @@ async function generateTargets(campaignId) {
       targetProgressBar.style.width = pct + '%';
       targetProgressText.textContent = `${i + 1}/${highMedTargets.length}`;
       
+      // Propaga al progress della sezione Analisi
+      if (typeof updateAnalisiProgress === 'function') {
+        updateAnalisiProgress(i + 1, highMedTargets.length, `Generazione motivazione: ${t.programData?.docente_nome || 'Docente ' + (i+1)}`);
+      }
+      
       try {
         // Dati del volume (se disponibili)
         const bookData = {
