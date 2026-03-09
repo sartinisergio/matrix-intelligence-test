@@ -26,15 +26,21 @@ async function loadMonitoraggi() {
   loadFrameworks();
 
   try {
-    const { data, error } = await supabaseClient
+    // Carica tutti i record e filtra lato client (colonna 'tipo' potrebbe non esistere)
+    let { data, error } = await supabaseClient
       .from('campagne')
       .select('*')
       .eq('user_id', session.user.id)
-      .eq('tipo', 'monitoraggio')
       .order('created_at', { ascending: false });
 
     if (error) throw error;
-    allMonitoraggi = data || [];
+
+    // Filtra per monitoraggio: usa campo 'tipo' se presente, altrimenti deduce da volumi_monitoraggio
+    allMonitoraggi = (data || []).filter(a => 
+      a.tipo === 'monitoraggio' || (a.volumi_monitoraggio && a.volumi_monitoraggio.length > 1)
+    );
+    // Assicura che il tipo sia impostato localmente
+    allMonitoraggi.forEach(m => { if (!m.tipo) m.tipo = 'monitoraggio'; });
     renderMonitoraggiList();
   } catch (e) {
     showToast('Errore caricamento monitoraggi: ' + e.message, 'error');
@@ -328,13 +334,24 @@ async function handleCreateMonitoraggio(event) {
   };
 
   try {
-    const { data, error } = await supabaseClient
+    // Prima prova con il campo 'tipo'
+    let { data, error } = await supabaseClient
       .from('campagne')
       .insert(monitoraggio)
       .select()
       .single();
 
+    // Se la colonna 'tipo' non esiste, riprova senza
+    if (error && error.message && error.message.includes('tipo')) {
+      console.warn('[Monitoraggio] Colonna tipo non presente, retry senza');
+      const { tipo, ...monSenzaTipo } = monitoraggio;
+      const retry = await supabaseClient.from('campagne').insert(monSenzaTipo).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
+
     if (error) throw error;
+    if (!data.tipo) data.tipo = 'monitoraggio';
 
     showToast(`Monitoraggio "${materia}" creato con ${volumi.length} volum${volumi.length === 1 ? 'e' : 'i'}!`, 'success');
     hideMonitoraggioForm();

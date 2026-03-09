@@ -34,6 +34,14 @@ async function loadAnalisi() {
     if (error) throw error;
     allAnalisi = data || [];
 
+    // Determina il tipo in base ai dati (la colonna 'tipo' potrebbe non esistere)
+    // Un record è monitoraggio se ha volumi_monitoraggio con 2+ volumi, oppure tipo === 'monitoraggio'
+    allAnalisi.forEach(a => {
+      if (!a.tipo) {
+        a.tipo = (a.volumi_monitoraggio && a.volumi_monitoraggio.length > 1) ? 'monitoraggio' : 'campagna';
+      }
+    });
+
     // Aggiorna anche le liste interne di campagna.js e monitoraggio.js
     allCampaigns = allAnalisi.filter(a => a.tipo !== 'monitoraggio');
     allMonitoraggi = allAnalisi.filter(a => a.tipo === 'monitoraggio');
@@ -504,8 +512,22 @@ async function createAnalisiMonitoraggio(session, materia, etichetta, volumi) {
   };
 
   try {
-    const { data, error } = await supabaseClient.from('campagne').insert(monitoraggio).select().single();
+    // Prima prova con il campo 'tipo'
+    let { data, error } = await supabaseClient.from('campagne').insert(monitoraggio).select().single();
+
+    // Se la colonna 'tipo' non esiste, riprova senza
+    if (error && error.message && error.message.includes('tipo')) {
+      console.warn('[Analisi] Colonna tipo non presente, retry senza campo tipo');
+      const { tipo, ...monSenzaTipo } = monitoraggio;
+      const retry = await supabaseClient.from('campagne').insert(monSenzaTipo).select().single();
+      data = retry.data;
+      error = retry.error;
+    }
+
     if (error) throw error;
+
+    // Imposta tipo localmente per la UI anche se non salvato nel DB
+    if (!data.tipo) data.tipo = 'monitoraggio';
 
     showToast(`Monitoraggio "${materia}" creato con ${volumi.length} volumi!`, 'success');
     hideAnalisiForm();
