@@ -396,12 +396,42 @@ async function deleteMonitoraggio(id) {
 // VISUALIZZAZIONE TARGET
 // ===================================================
 
-function viewMonitoraggioTargets(monitoraggioId) {
+async function viewMonitoraggioTargets(monitoraggioId) {
   const mon = allMonitoraggi.find(m => m.id === monitoraggioId);
   if (!mon) return;
 
   currentMonTargets = mon.target_generati || [];
   currentMonitoraggioId = monitoraggioId;
+
+  // --- Arricchisci manuale_principale con lookup fresco dal DB programmi ---
+  if (currentMonTargets.length > 0) {
+    try {
+      const { data: { session } } = await supabaseClient.auth.getSession();
+      if (session) {
+        const progIds = currentMonTargets.map(t => t.programma_id).filter(Boolean);
+        if (progIds.length > 0) {
+          const { data: freshPrograms } = await supabaseClient
+            .from('programmi')
+            .select('id, manuali_citati, docente_nome')
+            .in('id', progIds);
+
+          if (freshPrograms) {
+            for (const t of currentMonTargets) {
+              const fp = freshPrograms.find(p => p.id === t.programma_id);
+              if (fp && fp.manuali_citati && fp.manuali_citati.length > 0) {
+                const principale = fp.manuali_citati.find(m => m.ruolo === 'principale') || fp.manuali_citati[0];
+                t.manuale_principale = principale.titolo || '';
+                t.manuale_principale_autore = principale.autore || '';
+                t.manuale_principale_editore = principale.editore || '';
+              }
+            }
+          }
+        }
+      }
+    } catch (e) {
+      console.warn('[Monitoraggio] Errore aggiornamento manuali dal DB:', e);
+    }
+  }
 
   // Titolo
   document.getElementById('mon-result-title').textContent = mon.libro_materia || 'Monitoraggio';
@@ -497,14 +527,6 @@ function monitoraggioUrgenzaBadge(urgenza) {
 
 function renderMonitoraggioTargets(targets, showVolumeColumn) {
   const tbody = document.getElementById('mon-target-table-body');
-
-  // DEBUG: log dati manuale per ogni target visualizzato
-  if (targets && targets.length > 0) {
-    console.log('[Monitoraggio RENDER] Targets visualizzati:');
-    targets.forEach((t, i) => {
-      console.log(`  [${i}] ${t.docente_nome}: manuale_principale="${t.manuale_principale || 'VUOTO'}", autore="${t.manuale_principale_autore || 'VUOTO'}", editore="${t.manuale_principale_editore || 'VUOTO'}"`);
-    });
-  }
 
   if (!targets || targets.length === 0) {
     tbody.innerHTML = `
@@ -745,10 +767,7 @@ async function generaTargetMonitoraggio(monitoraggioId) {
 
           // Determina manuale principale dal DB
           const manualiDB = prog.manuali_citati || [];
-          const principaleDB = manualiDB.find(m => m.ruolo === 'principale');
-          // Fallback: se nessuno ha ruolo 'principale', prendi il primo
-          const manualePrimario = principaleDB || manualiDB[0] || {};
-          console.log(`[Monitoraggio DEBUG] ${prog.docente_nome}: manuali_citati=${JSON.stringify(manualiDB)}, principale=${JSON.stringify(manualePrimario)}`);
+          const principaleDB = manualiDB.find(m => m.ruolo === 'principale') || manualiDB[0] || {};
 
           return {
             programma_id: prog.id,
@@ -759,9 +778,9 @@ async function generaTargetMonitoraggio(monitoraggioId) {
             materia_inferita: prog.materia_inferita || '',
             scenario: prog.scenario_zanichelli || 'Non classificato',
             scenario_zanichelli: prog.scenario_zanichelli || 'Non classificato',
-            manuale_principale: manualePrimario.titolo || '',
-            manuale_principale_autore: manualePrimario.autore || '',
-            manuale_principale_editore: manualePrimario.editore || '',
+            manuale_principale: principaleDB.titolo || '',
+            manuale_principale_autore: principaleDB.autore || '',
+            manuale_principale_editore: principaleDB.editore || '',
             volume_ottimale: result.volume_ottimale || '',
             volume_ottimale_autore: result.volume_ottimale_autore || '',
             volume_consigliato: result.volume_ottimale || '',
@@ -840,9 +859,7 @@ async function generaTargetMonitoraggio(monitoraggioId) {
         );
 
         if (!match) {
-          console.warn(`[Monitoraggio] Priorita: nessun match per "${p.docente}" (${p.ateneo}) — dati cattedra persi`);
-        } else {
-          console.log(`[Monitoraggio MERGE] "${p.docente}" → match="${match.docente_nome}", manuale_principale="${match.manuale_principale}", editore="${match.manuale_principale_editore}"`);
+          console.warn(`[Monitoraggio] Priorita: nessun match per "${p.docente}" (${p.ateneo})`);
         }
 
         return {
@@ -890,11 +907,6 @@ async function generaTargetMonitoraggio(monitoraggioId) {
     }
 
     // 8. Salva tutto in Supabase
-    // DEBUG: log dati finali per ogni target
-    targets.forEach(t => {
-      console.log(`[Monitoraggio SAVE] ${t.docente_nome}: manuale="${t.manuale_principale}" autore="${t.manuale_principale_autore}" editore="${t.manuale_principale_editore}"`);
-    });
-
     const sintesi = prioritaData?.sintesi_disciplina || {
       totale_docenti: targets.length,
       difese_urgenti: targets.filter(t => t.tipo_azione === 'DIFESA').length,
