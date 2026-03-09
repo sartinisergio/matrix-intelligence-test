@@ -140,9 +140,9 @@ async function showNewMonitoraggioForm() {
   // Carica catalogo se non presente
   await loadCatalog();
 
-  // Popola dropdown materie dal catalogo (solo materie con volumi Zanichelli)
+  // Popola dropdown materie: materie con volumi Zanichelli + materie dei programmi
   const materiaSelect = document.getElementById('mon-materia');
-  materiaSelect.innerHTML = '<option value="">— Seleziona materia dal catalogo —</option>';
+  materiaSelect.innerHTML = '<option value="">— Seleziona materia —</option>';
 
   const materieConVolumi = {};
   for (const m of catalogManuals) {
@@ -152,10 +152,32 @@ async function showNewMonitoraggioForm() {
     }
   }
 
+  // Caso 2.2: aggiungi anche materie dai programmi caricati
+  try {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      const { data: programs } = await supabaseClient
+        .from('programmi')
+        .select('materia_inferita')
+        .eq('user_id', session.user.id);
+      const materieDocenti = new Set((programs || []).map(p => p.materia_inferita).filter(Boolean));
+      for (const mat of materieDocenti) {
+        const giaCoperta = Object.keys(materieConVolumi).some(k => checkSubjectMatch(k, mat));
+        if (!giaCoperta && !materieConVolumi[mat]) {
+          materieConVolumi[mat] = 0;
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Monitoraggio] Errore caricamento materie docenti:', e);
+  }
+
   Object.keys(materieConVolumi).sort().forEach(mat => {
     const opt = document.createElement('option');
     opt.value = mat;
-    opt.textContent = `${mat} (${materieConVolumi[mat]} volumi Zanichelli)`;
+    opt.textContent = materieConVolumi[mat] > 0
+      ? `${mat} (${materieConVolumi[mat]} volumi Zanichelli)`
+      : `${mat} (nessun volume Zanichelli)`;
     materiaSelect.appendChild(opt);
   });
 
@@ -219,9 +241,15 @@ async function onMonMateriaChange() {
   volumiSection.classList.remove('hidden');
 
   if (volumiZan.length === 0) {
-    volumiContainer.innerHTML = '';
-    noVolumiMsg.classList.remove('hidden');
-    countEl.textContent = '0 volumi';
+    // Caso 2.2: nessun volume Zanichelli — mostra messaggio informativo
+    volumiContainer.innerHTML = `
+      <div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500">
+        <i class="fas fa-info-circle mr-1"></i>
+        Non sono presenti volumi Zanichelli per <strong>${materia}</strong> nel catalogo.
+        Per questa materia puoi creare un'analisi dalla sezione <strong>Analisi</strong> selezionando la pre-valutazione novita.
+      </div>`;
+    noVolumiMsg.classList.add('hidden');
+    countEl.textContent = 'Nessun volume Zanichelli';
     validateMonitoraggioForm();
     return;
   }
@@ -733,9 +761,33 @@ async function generaTargetMonitoraggio(monitoraggioId) {
     console.log(`[Monitoraggio] ${matchingPrograms.length} programmi trovati per "${materia}"`);
     updateMonProgress(0, matchingPrograms.length, `Analisi di ${matchingPrograms.length} docenti...`);
 
-    // 4. Estrai temi dai volumi se mancanti (una sola volta)
-    for (let vi = 0; vi < volumi.length; vi++) {
-      const v = volumi[vi];
+    // 4. Filtra volumi utilizzabili: includi novita SOLO se ha un indice reale
+    const volumiAnalisi = volumi.filter(v => {
+      if (v.is_novita) {
+        // Novita completata (ha indice) → includi nell'analisi
+        return v.indice && v.indice.trim().length >= 20;
+      }
+      return true; // Volumi di catalogo sempre inclusi
+    });
+    const hasNovitaPendente = volumi.some(v => v.is_novita && (!v.indice || v.indice.trim().length < 20));
+    const hasNovitaCompletata = volumi.some(v => v.is_novita && v.indice && v.indice.trim().length >= 20);
+    if (hasNovitaPendente) {
+      console.log(`[Monitoraggio] Volume novita in attesa (senza indice). Analisi su ${volumiAnalisi.length} volumi di catalogo.`);
+    }
+    if (hasNovitaCompletata) {
+      console.log(`[Monitoraggio] Volume novita completato e incluso nell'analisi. Totale volumi: ${volumiAnalisi.length}`);
+    }
+
+    if (volumiAnalisi.length === 0) {
+      showToast('Nessun volume con indice disponibile per l\'analisi. Completa prima la novita.', 'warning');
+      monitoraggioGenerating = false;
+      hideMonProgress();
+      return;
+    }
+
+    // 5. Estrai temi dai volumi se mancanti (una sola volta)
+    for (let vi = 0; vi < volumiAnalisi.length; vi++) {
+      const v = volumiAnalisi[vi];
       if ((!v.temi || v.temi.length === 0) && v.indice && v.indice.trim().length > 20) {
         try {
           const themeResult = await callOpenAI(

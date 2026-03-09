@@ -29,7 +29,7 @@ app.get('/dashboard', (c) => {
 // ==========================================
 
 app.get('/api/health', (c) => {
-  return c.json({ status: 'ok', version: '0.1.0', name: 'MATRIX Intelligence' })
+  return c.json({ status: 'ok', version: '1.0.0', name: 'MATRIX Intelligence Plus' })
 })
 
 export default app
@@ -43,7 +43,7 @@ function loginPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MATRIX Intelligence — Analisi di mercato editoriale universitario</title>
+  <title>MATRIX Intelligence Plus — Analisi di mercato editoriale universitario</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
@@ -401,7 +401,7 @@ function loginPage(): string {
         <div class="inline-flex items-center justify-center w-16 h-16 bg-white/10 backdrop-blur-sm rounded-2xl mb-4">
           <i class="fas fa-brain text-3xl text-white"></i>
         </div>
-        <h2 class="text-2xl font-bold text-white">Accedi a Matrix Intelligence</h2>
+        <h2 class="text-2xl font-bold text-white">Accedi a Matrix Intelligence Plus</h2>
         <p class="text-blue-200 mt-2">Inserisci le tue credenziali per iniziare</p>
       </div>
 
@@ -481,7 +481,7 @@ function loginPage(): string {
       </div>
 
       <p class="text-center text-blue-200 text-sm mt-6">
-        MATRIX Intelligence v0.4 &mdash; Zanichelli
+        MATRIX Intelligence Plus v1.0 &mdash; Zanichelli
       </p>
     </div>
   </section>
@@ -493,7 +493,7 @@ function loginPage(): string {
         <div>
           <div class="flex items-center gap-2 mb-3">
             <i class="fas fa-brain text-blue-300"></i>
-            <span class="text-white font-semibold">MATRIX Intelligence</span>
+            <span class="text-white font-semibold">MATRIX Intelligence Plus</span>
           </div>
           <p class="text-blue-300/60 text-sm leading-relaxed">
             Piattaforma AI per l'analisi del mercato editoriale universitario e la gestione delle campagne promozionali.
@@ -522,7 +522,7 @@ function loginPage(): string {
       </div>
       <div class="border-t border-white/10 pt-6 text-center">
         <p class="text-blue-300/40 text-sm">
-          MATRIX Intelligence v0.4 &mdash; Strumento interno per promotori editoriali Zanichelli
+          MATRIX Intelligence Plus v1.0 &mdash; Strumento interno per promotori editoriali Zanichelli
         </p>
       </div>
     </div>
@@ -543,7 +543,7 @@ function dashboardPage(): string {
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>MATRIX Intelligence — Dashboard</title>
+  <title>MATRIX Intelligence Plus — Dashboard</title>
   <link rel="icon" type="image/svg+xml" href="/favicon.svg">
   <script src="https://cdn.tailwindcss.com"></script>
   <link href="https://cdn.jsdelivr.net/npm/@fortawesome/fontawesome-free@6.4.0/css/all.min.css" rel="stylesheet">
@@ -657,7 +657,7 @@ function dashboardPage(): string {
     <button onclick="toggleSidebar()" class="text-xl">
       <i class="fas fa-bars"></i>
     </button>
-    <h1 class="font-bold">MATRIX Intelligence</h1>
+    <h1 class="font-bold">MATRIX Intelligence Plus</h1>
   </header>
 
   <!-- Main Content -->

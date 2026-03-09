@@ -16,8 +16,8 @@ const CONFIG = {
   },
   
   // Costanti applicazione
-  APP_NAME: 'MATRIX Intelligence',
-  APP_VERSION: '0.1.0',
+  APP_NAME: 'MATRIX Intelligence Plus',
+  APP_VERSION: '1.0.0',
   
   // Rate limiting
   BATCH_DELAY_MS: 2000, // 2 secondi tra le chiamate LLM

@@ -115,6 +115,9 @@ function renderAnalisiList() {
     const tipoLabel = isMonitoraggio ? 'Monitoraggio' : 'Campagna';
     const tipoBadgeClass = isMonitoraggio ? 'bg-indigo-100 text-indigo-700' : 'bg-blue-100 text-blue-700';
 
+    // Verifica se il monitoraggio contiene una novita in attesa
+    const hasNovitaInAttesa = isMonitoraggio && volumi.some(v => v.is_novita && (!v.indice || v.indice.trim().length < 20));
+
     // Titolo
     const titolo = isMonitoraggio
       ? (a.libro_materia || 'Monitoraggio')
@@ -139,6 +142,16 @@ function renderAnalisiList() {
       statusBadge = '<span class="px-2 py-1 bg-blue-100 text-blue-700 rounded-full text-xs font-medium"><i class="fas fa-search mr-1"></i>Pre-valutazione</span>';
     }
 
+    // Novita in attesa (monitoraggio con volume novita non completato)
+    let novitaBadge = '';
+    if (hasNovitaInAttesa) {
+      novitaBadge = '<span class="px-2 py-1 bg-amber-100 text-amber-700 rounded-full text-xs font-medium"><i class="fas fa-star mr-1"></i>Novita in attesa</span>';
+    }
+
+    // Badge novita completabile (il volume ha titolo/autore ma non indice o indice corto)
+    const novitaVolume = isMonitoraggio && volumi.find(v => v.is_novita);
+    const novitaCompletabile = hasNovitaInAttesa && novitaVolume;
+
     // Bottoni azioni
     let actionButtons = '';
     if (targetCount > 0) {
@@ -151,6 +164,12 @@ function renderAnalisiList() {
       actionButtons += `
         <button onclick="showCompleteCampaign('${a.id}')" class="px-3 py-1.5 bg-blue-600 text-white rounded-lg text-sm hover:bg-blue-700 transition-colors" title="Aggiungi indice e rigenera">
           <i class="fas fa-plus-circle mr-1"></i>Completa
+        </button>`;
+    }
+    if (novitaCompletabile) {
+      actionButtons += `
+        <button onclick="showCompleteNovitaMonitoraggio('${a.id}')" class="px-3 py-1.5 bg-amber-500 text-white rounded-lg text-sm hover:bg-amber-600 transition-colors" title="Aggiungi dettagli volume novita">
+          <i class="fas fa-star mr-1"></i>Completa novita
         </button>`;
     }
     if (targetCount === 0 && a.stato !== 'completata') {
@@ -194,6 +213,10 @@ function renderAnalisiList() {
             ${isPreVal ? `<div class="mt-2 text-xs text-blue-600 bg-blue-50 px-2 py-1 rounded-lg inline-flex items-center gap-1">
                <i class="fas fa-lightbulb"></i>
                Aggiungi l'indice del volume per motivazioni personalizzate
+             </div>` : ''}
+            ${novitaCompletabile ? `<div class="mt-2 text-xs text-amber-600 bg-amber-50 px-2 py-1 rounded-lg inline-flex items-center gap-1">
+               <i class="fas fa-star"></i>
+               Volume novita in attesa di completamento — l'analisi attuale copre solo i volumi di catalogo
              </div>` : ''}
           </div>
           <div class="flex items-center gap-2 ml-4">
@@ -267,9 +290,9 @@ async function showNewAnalisiForm() {
   // Carica catalogo
   await loadCatalog();
 
-  // Popola dropdown materie dal catalogo (tutte le materie con volumi Zanichelli)
+  // Popola dropdown materie: materie con volumi Zanichelli + materie dei programmi caricati
   const materiaSelect = document.getElementById('analisi-materia');
-  materiaSelect.innerHTML = '<option value="">— Seleziona materia dal catalogo —</option>';
+  materiaSelect.innerHTML = '<option value="">— Seleziona materia —</option>';
 
   const materieConVolumi = {};
   for (const m of catalogManuals) {
@@ -279,10 +302,33 @@ async function showNewAnalisiForm() {
     }
   }
 
+  // Caso 2.2: aggiungi anche materie dai programmi caricati che non hanno volumi Zanichelli
+  try {
+    const { data: { session } } = await supabaseClient.auth.getSession();
+    if (session) {
+      const { data: programs } = await supabaseClient
+        .from('programmi')
+        .select('materia_inferita')
+        .eq('user_id', session.user.id);
+      const materieDocenti = new Set((programs || []).map(p => p.materia_inferita).filter(Boolean));
+      for (const mat of materieDocenti) {
+        // Verifica se questa materia e gia coperta dai volumi Zanichelli
+        const giaCoperta = Object.keys(materieConVolumi).some(k => checkSubjectMatch(k, mat));
+        if (!giaCoperta && !materieConVolumi[mat]) {
+          materieConVolumi[mat] = 0; // 0 volumi Zanichelli
+        }
+      }
+    }
+  } catch (e) {
+    console.warn('[Analisi] Errore caricamento materie docenti:', e);
+  }
+
   Object.keys(materieConVolumi).sort().forEach(mat => {
     const opt = document.createElement('option');
     opt.value = mat;
-    opt.textContent = `${mat} (${materieConVolumi[mat]} volumi Zanichelli)`;
+    opt.textContent = materieConVolumi[mat] > 0
+      ? `${mat} (${materieConVolumi[mat]} volumi Zanichelli)`
+      : `${mat} (nessun volume Zanichelli)`;
     materiaSelect.appendChild(opt);
   });
 
@@ -350,10 +396,27 @@ async function onAnalisiMateriaChange() {
 
   volumiSection.classList.remove('hidden');
 
+  // Caso 2.2: se non ci sono volumi Zanichelli, mostra solo checkbox novita
   if (volumiZan.length === 0) {
-    volumiContainer.innerHTML = '';
-    noVolumiMsg.classList.remove('hidden');
-    countEl.textContent = '0 volumi';
+    noVolumiMsg.classList.add('hidden');
+    countEl.textContent = 'Nessun volume Zanichelli per questa materia';
+    volumiContainer.innerHTML = `
+      <div class="px-3 py-2 bg-gray-50 border border-gray-200 rounded-lg text-sm text-gray-500 mb-3">
+        <i class="fas fa-info-circle mr-1"></i>
+        Non sono presenti volumi Zanichelli per <strong>${materia}</strong> nel catalogo.
+        Puoi comunque avviare una pre-valutazione selezionando il volume novita.
+      </div>
+      <label class="analisi-volume-checkbox flex items-start gap-3 bg-amber-50 rounded-xl p-4 border-2 border-dashed border-amber-300 cursor-pointer hover:bg-amber-100/50 hover:border-amber-400 transition-colors"
+             data-manual-id="__novita__">
+        <input type="checkbox" name="analisi-vol" value="__novita__" onchange="validateAnalisiForm()"
+               class="mt-1 w-4 h-4 text-amber-500 rounded focus:ring-amber-300">
+        <div class="flex-1">
+          <div class="flex items-center gap-2">
+            <span class="font-medium text-amber-800 text-sm"><i class="fas fa-star mr-1"></i>Volume non ancora disponibile (novita)</span>
+          </div>
+          <div class="text-xs text-amber-600 mt-0.5">Avvia una <strong>pre-valutazione</strong> per esplorare la situazione adozioni in una materia dove Zanichelli non e ancora presente.</div>
+        </div>
+      </label>`;
     validateAnalisiForm();
     return;
   }
@@ -361,7 +424,7 @@ async function onAnalisiMateriaChange() {
   noVolumiMsg.classList.add('hidden');
   countEl.textContent = `${volumiZan.length} volumi disponibili`;
 
-  // Genera checkbox per ogni volume Zanichelli
+  // Genera checkbox per ogni volume Zanichelli + novita
   volumiContainer.innerHTML = volumiZan.map((v, i) => `
     <label class="analisi-volume-checkbox flex items-start gap-3 bg-gray-50 rounded-xl p-4 border border-gray-200 cursor-pointer hover:bg-blue-50/30 hover:border-zanichelli-light transition-colors"
            data-manual-id="${v.id}">
@@ -453,13 +516,25 @@ function validateAnalisiForm() {
     }
     if (tipoLabel) tipoLabel.textContent = 'Tipo: Campagna novita (1 volume)';
     if (btnLabel) btnLabel.textContent = 'Crea Campagna e Genera Target';
+  } else if (catalogChecked.length > 0 && hasNovita) {
+    // Caso 1.1: catalogo + novita → monitoraggio con novita in attesa
+    if (tipoBadge) {
+      tipoBadge.classList.remove('hidden');
+      tipoBadge.innerHTML = `
+        <div class="px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-700">
+          <i class="fas fa-binoculars mr-1"></i>
+          <strong>Monitoraggio disciplinare + novita</strong> — analisi strategica su ${catalogChecked.length} volum${catalogChecked.length === 1 ? 'e' : 'i'} di catalogo. Il volume novita sara aggiunto quando disponibile.
+        </div>`;
+    }
+    if (tipoLabel) tipoLabel.textContent = `Tipo: Monitoraggio (${catalogChecked.length} cat. + novita)`;
+    if (btnLabel) btnLabel.textContent = 'Crea Monitoraggio e Avvia Analisi';
   } else {
     if (tipoBadge) {
       tipoBadge.classList.remove('hidden');
       tipoBadge.innerHTML = `
         <div class="px-3 py-2 bg-indigo-50 border border-indigo-200 rounded-lg text-sm text-indigo-700">
           <i class="fas fa-binoculars mr-1"></i>
-          <strong>Monitoraggio disciplinare</strong> — analisi strategica confrontando ${totalSelected}${hasNovita ? ' (incl. novita)' : ''} volumi Zanichelli con tutti i docenti della materia.
+          <strong>Monitoraggio disciplinare</strong> — analisi strategica confrontando ${totalSelected} volumi Zanichelli con tutti i docenti della materia.
         </div>`;
     }
     if (tipoLabel) tipoLabel.textContent = `Tipo: Monitoraggio disciplinare (${checked.length} volumi)`;
@@ -677,6 +752,161 @@ function closeAnalisiCampaignResults() {
 }
 
 // ===================================================
+// COMPLETA NOVITA IN MONITORAGGIO
+// ===================================================
+
+function showCompleteNovitaMonitoraggio(analisiId) {
+  const analisi = allAnalisi.find(a => a.id === analisiId);
+  if (!analisi) return;
+
+  const volumi = analisi.volumi_monitoraggio || [];
+  const novitaVolume = volumi.find(v => v.is_novita);
+  if (!novitaVolume) {
+    showToast('Volume novita non trovato in questo monitoraggio', 'warning');
+    return;
+  }
+
+  const materia = analisi.libro_materia || '';
+
+  const modal = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-gray-800">
+        <i class="fas fa-star mr-2 text-amber-500"></i>
+        Completa Volume Novita
+      </h3>
+      <p class="text-sm text-gray-600">
+        Il monitoraggio <strong>${materia}</strong> contiene un volume novita in attesa.
+        Inserisci i dettagli del volume per completare l'analisi.
+      </p>
+
+      <div class="grid grid-cols-2 gap-4">
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Titolo del volume</label>
+          <input type="text" id="novita-titolo" value="${novitaVolume.titolo && !novitaVolume.titolo.startsWith('Volume novita') ? novitaVolume.titolo : ''}"
+                 class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+                 placeholder="Es: Economia">
+        </div>
+        <div>
+          <label class="block text-sm font-medium text-gray-700 mb-1">Autore</label>
+          <input type="text" id="novita-autore" value="${novitaVolume.autore || ''}"
+                 class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+                 placeholder="Es: Rossi, Bianchi">
+        </div>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Indice / Sommario del volume</label>
+        <textarea id="novita-indice" rows="8"
+                  class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+                  placeholder="Incolla qui l'indice del libro (capitoli principali)...">${novitaVolume.indice || ''}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Temi chiave (opzionale, separati da virgola)</label>
+        <input type="text" id="novita-temi" value="${(novitaVolume.temi || []).join(', ')}"
+               class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+               placeholder="Generati automaticamente dall'indice se non inseriti">
+      </div>
+
+      <div class="bg-amber-50 border border-amber-200 rounded-lg p-3 text-sm text-amber-700">
+        <i class="fas fa-info-circle mr-1"></i>
+        Dopo il salvataggio, il monitoraggio verra rigenerato includendo il volume novita nell'analisi.
+        I volumi di catalogo gia analizzati manterranno i risultati precedenti.
+      </div>
+
+      <div class="flex gap-3 pt-2">
+        <button onclick="handleCompleteNovitaMonitoraggio('${analisiId}')"
+                class="flex-1 py-2.5 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 transition-colors">
+          <i class="fas fa-rocket mr-1"></i>Salva e Rigenera Monitoraggio
+        </button>
+        <button onclick="closeModal()" class="px-6 py-2.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors">
+          Annulla
+        </button>
+      </div>
+    </div>`;
+
+  modal.classList.remove('hidden');
+}
+
+async function handleCompleteNovitaMonitoraggio(analisiId) {
+  const titolo = document.getElementById('novita-titolo')?.value?.trim();
+  const autore = document.getElementById('novita-autore')?.value?.trim();
+  const indice = document.getElementById('novita-indice')?.value?.trim();
+  const temiInput = document.getElementById('novita-temi')?.value || '';
+  const temi = temiInput ? temiInput.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+  if (!titolo) {
+    showToast('Inserisci almeno il titolo del volume', 'warning');
+    return;
+  }
+  if (!indice || indice.length < 20) {
+    showToast('L\'indice e troppo corto. Inserisci almeno i capitoli principali.', 'warning');
+    return;
+  }
+
+  const analisi = allAnalisi.find(a => a.id === analisiId);
+  if (!analisi) {
+    showToast('Analisi non trovata', 'error');
+    return;
+  }
+
+  const volumi = analisi.volumi_monitoraggio || [];
+  const novitaIdx = volumi.findIndex(v => v.is_novita);
+  if (novitaIdx < 0) {
+    showToast('Volume novita non trovato', 'error');
+    return;
+  }
+
+  // Aggiorna il volume novita con i dati inseriti
+  volumi[novitaIdx] = {
+    ...volumi[novitaIdx],
+    titolo: titolo,
+    autore: autore || '',
+    editore: 'Zanichelli',
+    indice: indice,
+    temi: temi,
+    // Mantieni is_novita ma ora ha un indice → verra incluso nell'analisi
+    is_novita: false, // Non piu "in attesa" — ora e un volume completo
+    was_novita: true   // Flag per sapere che era una novita
+  };
+
+  try {
+    // Salva i volumi aggiornati in Supabase
+    const { error } = await supabaseClient.from('campagne').update({
+      volumi_monitoraggio: volumi,
+      updated_at: new Date().toISOString()
+    }).eq('id', analisiId);
+
+    if (error) throw error;
+
+    // Aggiorna in memoria
+    analisi.volumi_monitoraggio = volumi;
+
+    // Aggiorna anche allMonitoraggi
+    const monIdx = allMonitoraggi.findIndex(m => m.id === analisiId);
+    if (monIdx >= 0) {
+      allMonitoraggi[monIdx].volumi_monitoraggio = volumi;
+    }
+
+    closeModal();
+    showToast('Volume novita completato! Rigenerazione monitoraggio in corso...', 'success');
+
+    // Mostra barra di progresso e rigenera
+    showAnalisiProgress(`Rigenerazione: ${analisi.libro_materia}`);
+    await generaTargetMonitoraggio(analisiId);
+    hideAnalisiProgress();
+
+    // Ricarica per aggiornare badge
+    await loadAnalisi();
+  } catch (e) {
+    showToast('Errore salvataggio: ' + e.message, 'error');
+  }
+}
+
+// ===================================================
 // HELPER: getZanichelliFromCatalog (usato da campagna.js)
 // ===================================================
 // Questa funzione e definita qui perche usata da isZanichelliAuthor in campagna.js
@@ -688,4 +918,143 @@ if (typeof getZanichelliFromCatalog !== 'function') {
     return catalogManuals.filter(m => m.is_zanichelli);
   }
   window.getZanichelliFromCatalog = getZanichelliFromCatalog;
+}
+
+// ===================================================
+// COMPLETA NOVITA' IN MONITORAGGIO
+// ===================================================
+// Mostra modal per aggiungere titolo, autore e indice al volume novita
+// in un monitoraggio gia creato. Dopo il salvataggio, rigenera l'analisi.
+
+function showCompleteNovitaMonitoraggio(monitoraggioId) {
+  const analisi = allAnalisi.find(a => a.id === monitoraggioId);
+  if (!analisi) return;
+
+  const volumi = analisi.volumi_monitoraggio || [];
+  const novita = volumi.find(v => v.is_novita);
+  if (!novita) {
+    showToast('Nessun volume novita trovato', 'warning');
+    return;
+  }
+
+  const modal = document.getElementById('modal-overlay');
+  const content = document.getElementById('modal-content');
+
+  content.innerHTML = `
+    <div class="space-y-4">
+      <h3 class="text-lg font-semibold text-gray-800">
+        <i class="fas fa-star mr-2 text-amber-500"></i>
+        Completa Volume Novita
+      </h3>
+      <p class="text-sm text-gray-600">
+        L'analisi e stata eseguita sui volumi di catalogo. Aggiungi i dettagli del nuovo volume per rigenerare l'analisi completa con motivazioni personalizzate.
+      </p>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Titolo del volume</label>
+        <input type="text" id="novita-titolo" value="${(novita.titolo || '').replace(/Volume novita —.*/, '').trim()}"
+               class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+               placeholder="Es. Principi di Economia">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Autore</label>
+        <input type="text" id="novita-autore" value="${novita.autore || ''}"
+               class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+               placeholder="Es. Rossi M., Bianchi G.">
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Indice / Sommario del volume</label>
+        <textarea id="novita-indice" rows="8"
+                  class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+                  placeholder="Incolla qui l'indice del libro (capitoli principali)...">${novita.indice || ''}</textarea>
+      </div>
+
+      <div>
+        <label class="block text-sm font-medium text-gray-700 mb-1">Temi chiave (opzionale, separati da virgola)</label>
+        <input type="text" id="novita-temi" value="${(novita.temi || []).join(', ')}"
+               class="w-full px-3 py-2.5 border rounded-lg focus:ring-2 focus:ring-amber-400 outline-none text-sm"
+               placeholder="Generati automaticamente dall'indice">
+      </div>
+
+      <div class="flex gap-3 pt-2">
+        <button onclick="handleCompleteNovitaMonitoraggio('${monitoraggioId}')"
+                class="flex-1 py-2.5 bg-amber-500 text-white rounded-lg font-medium hover:bg-amber-600 transition-colors">
+          <i class="fas fa-rocket mr-1"></i>Salva e Rigenera Analisi
+        </button>
+        <button onclick="closeModal()" class="px-6 py-2.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors">
+          Annulla
+        </button>
+      </div>
+    </div>`;
+
+  modal.classList.remove('hidden');
+}
+
+async function handleCompleteNovitaMonitoraggio(monitoraggioId) {
+  const titolo = document.getElementById('novita-titolo')?.value?.trim();
+  const autore = document.getElementById('novita-autore')?.value?.trim();
+  const indice = document.getElementById('novita-indice')?.value?.trim();
+  const temiInput = document.getElementById('novita-temi')?.value || '';
+  const temi = temiInput ? temiInput.split(',').map(t => t.trim()).filter(Boolean) : [];
+
+  if (!titolo) {
+    showToast('Inserisci almeno il titolo del volume', 'warning');
+    return;
+  }
+  if (!indice || indice.length < 20) {
+    showToast('Inserisci l\'indice del volume (almeno i capitoli principali)', 'warning');
+    return;
+  }
+
+  try {
+    const analisi = allAnalisi.find(a => a.id === monitoraggioId);
+    if (!analisi) throw new Error('Monitoraggio non trovato');
+
+    const volumi = analisi.volumi_monitoraggio || [];
+    const novitaIdx = volumi.findIndex(v => v.is_novita);
+    if (novitaIdx === -1) throw new Error('Volume novita non trovato');
+
+    // Aggiorna il volume novita con i nuovi dati
+    volumi[novitaIdx] = {
+      ...volumi[novitaIdx],
+      titolo: titolo,
+      autore: autore || '',
+      indice: indice,
+      temi: temi,
+      is_novita: true // mantieni il flag per tracciabilita
+    };
+
+    // Salva i volumi aggiornati su Supabase
+    const { error } = await supabaseClient.from('campagne').update({
+      volumi_monitoraggio: volumi,
+      updated_at: new Date().toISOString()
+    }).eq('id', monitoraggioId);
+
+    if (error) throw error;
+
+    // Aggiorna in memoria
+    analisi.volumi_monitoraggio = volumi;
+    const monIdx = allMonitoraggi.findIndex(m => m.id === monitoraggioId);
+    if (monIdx >= 0) allMonitoraggi[monIdx].volumi_monitoraggio = volumi;
+
+    closeModal();
+    showToast('Volume novita completato! Rigenerazione analisi...', 'success');
+
+    // Mostra barra di progresso e rigenera
+    showAnalisiProgress(`Rigenerazione monitoraggio: ${analisi.libro_materia}`);
+    updateAnalisiProgress(0, 1, 'Rigenerazione con volume novita incluso...');
+
+    await generaTargetMonitoraggio(monitoraggioId);
+
+    hideAnalisiProgress();
+    await loadAnalisi();
+
+    showToast('Analisi rigenerata con il volume novita incluso!', 'success');
+  } catch (e) {
+    hideAnalisiProgress();
+    showToast('Errore completamento novita: ' + e.message, 'error');
+    console.error('[Analisi] Errore completamento novita:', e);
+  }
 }
