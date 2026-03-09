@@ -498,6 +498,14 @@ function monitoraggioUrgenzaBadge(urgenza) {
 function renderMonitoraggioTargets(targets, showVolumeColumn) {
   const tbody = document.getElementById('mon-target-table-body');
 
+  // DEBUG: log dati manuale per ogni target visualizzato
+  if (targets && targets.length > 0) {
+    console.log('[Monitoraggio RENDER] Targets visualizzati:');
+    targets.forEach((t, i) => {
+      console.log(`  [${i}] ${t.docente_nome}: manuale_principale="${t.manuale_principale || 'VUOTO'}", autore="${t.manuale_principale_autore || 'VUOTO'}", editore="${t.manuale_principale_editore || 'VUOTO'}"`);
+    });
+  }
+
   if (!targets || targets.length === 0) {
     tbody.innerHTML = `
       <tr><td colspan="9" class="px-4 py-8 text-center text-gray-400">
