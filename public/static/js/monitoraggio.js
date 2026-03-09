@@ -1070,36 +1070,118 @@ async function generateMonitoraggioEmail(targetIndex) {
   showToast('Generazione email in corso...', 'info');
 
   try {
-    // Trova il volume ottimale tra i volumi configurati
+    // Volume ottimale
     const volumi = mon.volumi_monitoraggio || [];
     const volumeOttimale = volumi.find(v => v.titolo === target.volume_consigliato) || volumi[0] || {};
 
-    const userPrompt = `Scrivi una email professionale per un promotore editoriale Zanichelli.
+    // Cognome del docente
+    const nomeCompleto = target.docente_nome || '';
+    const cognome = nomeCompleto.split(' ').filter(Boolean).pop() || nomeCompleto;
 
-DESTINATARIO:
-- Docente: ${target.docente_nome || 'N/D'}
-- Ateneo: ${target.ateneo || 'N/D'}
-- Materia: ${target.materia_inferita || mon.libro_materia || 'N/D'}
-- Scenario attuale: ${target.scenario || 'N/D'}
+    // Scenario per differenziare il template
+    const scenario = target.scenario_zanichelli || target.scenario || 'zanichelli_assente';
+    const manualeAttuale = target.manuale_principale || 'Non identificato';
+    const manualeEditore = target.manuale_principale_editore || '';
 
-AZIONE: ${target.tipo_azione || 'N/D'}
-VOLUME DA PROPORRE: ${volumeOttimale.titolo || target.volume_consigliato || 'N/D'}
-MOTIVAZIONE: ${target.motivazione_scelta || 'N/D'}
+    // Analisi cattedra (dati ricchi)
+    const analisi = target.analisi_cattedra || {};
+    const leve = (analisi.leve_cambio || []).join('\n');
+    const gap = analisi.gap_opportunita || '';
+    const taglio = analisi.taglio || '';
 
-Scrivi una email breve (max 150 parole), professionale, che:
-1. Si presenti come promotore Zanichelli
-2. Faccia riferimento alla materia e all'ateneo
-3. Proponga il volume specifico con 1-2 punti di forza concreti legati al programma del docente
-4. Chieda un appuntamento
+    // Indice del volume proposto (se disponibile)
+    const indiceVolume = volumeOttimale.indice || '';
 
-Tono: cordiale, professionale, non invasivo. NO frasi generiche. NO elenchi puntati.`;
+    // --- PROMPT DIFFERENZIATO PER SCENARIO ---
+    let scenarioInstructions = '';
 
-    const systemPrompt = 'Sei un esperto di comunicazione commerciale nel settore editoriale universitario. Scrivi email concise, personalizzate e professionali. Rispondi SOLO con il testo della email, senza commenti.';
+    if (scenario === 'zanichelli_principale') {
+      scenarioInstructions = `
+TIPO DI MAIL: AGGIORNAMENTO/FIDELIZZAZIONE
+Il docente adotta gia un titolo Zanichelli (${manualeAttuale}). NON stai proponendo un cambio di editore.
+Stai presentando un NUOVO VOLUME o una NUOVA EDIZIONE dello stesso ambito.
 
-    const emailText = await callOpenAIExtended(systemPrompt, userPrompt, false, 1000);
+APERTURA: "Gentile professor ${cognome}, La contatto perche dal Suo programma di [materia] destinato agli studenti del corso di laurea in [CORSO DI LAUREA] risulta in adozione ${manualeAttuale}. La informo che e disponibile un nuovo titolo del nostro catalogo che potrebbe interessarLe..."
+Poi indica 2-3 argomenti del programma e perche il nuovo volume li tratta in modo aggiornato o diverso.
 
-    // Mostra email in modal o alert (riusa pattern di campagna se disponibile)
-    showEmailModal(target, emailText);
+PROPOSTA: Presenta il nuovo volume evidenziando cosa lo differenzia da quello attualmente adottato (nuovi contenuti, approccio diverso, aggiornamenti). NON parlare male del titolo attuale. Cita 2-3 capitoli del nuovo volume rilevanti.
+
+CHIUSURA: Offri copia omaggio per confronto con il titolo attuale e disponibilita per un incontro.`;
+
+    } else if (scenario === 'zanichelli_alternativo') {
+      scenarioInstructions = `
+TIPO DI MAIL: PROPOSTA DI UPGRADE
+Il docente usa gia un titolo Zanichelli (${manualeAttuale}) ma come testo complementare, non principale.
+L'obiettivo e proporre il NUOVO VOLUME come possibile adozione principale o rafforzare la presenza Zanichelli.
+
+APERTURA: "Gentile professor ${cognome}, La contatto dopo aver attentamente studiato il Suo programma di [materia] destinato agli studenti del corso di laurea in [CORSO DI LAUREA]."
+Menziona che tra i testi indicati figura gia un titolo Zanichelli. Indica 2-3 argomenti specifici del programma.
+
+PROPOSTA: Presenta il nuovo volume come un testo che copre in modo completo gli argomenti del programma, evidenziando la continuita con il titolo Zanichelli gia in uso. Cita 2-3 capitoli specifici del nuovo volume.
+
+CHIUSURA: Offri copia omaggio e disponibilita per un incontro.`;
+
+    } else {
+      scenarioInstructions = `
+TIPO DI MAIL: PRIMO CONTATTO / CONQUISTA
+Il docente attualmente NON adotta titoli Zanichelli${manualeAttuale !== 'Non identificato' ? ' (adotta: ' + manualeAttuale + (manualeEditore ? ', ' + manualeEditore : '') + ')' : ''}.
+L'obiettivo e presentare il nuovo volume come alternativa valida.
+
+APERTURA: "Gentile professor ${cognome}, La contatto dopo aver attentamente studiato il Suo programma di [materia] destinato agli studenti del corso di laurea in [CORSO DI LAUREA]."
+Indica 2-3 argomenti specifici del programma a cui il docente dedica attenzione. Chiudi con: "Questi argomenti sono particolarmente approfonditi nel nuovo volume che Le vorrei proporre."
+
+PROPOSTA: "Si tratta di ${volumeOttimale.autore || '[Autore]'}, ${volumeOttimale.titolo || '[Titolo]'}, e a questa pagina [LINK_ANTEPRIMA] puo gia consultare un'anteprima con l'indice completo e un capitolo campione." Cita 2-3 capitoli specifici del volume particolarmente rilevanti per il programma del docente.
+
+CHIUSURA: Offri copia omaggio ("Se desidera ricevere una copia omaggio per una valutazione approfondita, La prego di comunicarmelo indicando in questo caso anche il luogo preferito per la spedizione.") e l'alternativa dell'appuntamento. Chiudi con "Nella speranza di risentirLa, approfitto dell'occasione per inviarLe i miei migliori saluti."`;
+    }
+
+    const systemPrompt = `Sei un assistente che scrive mail professionali per promotori editoriali Zanichelli.
+Scrivi mail di primo contatto a docenti universitari.
+
+TONO: formale ma non burocratico. Il promotore si rivolge al docente con rispetto professionale.
+Non usare espressioni come "mi permetto di", "con la presente", "in qualita di".
+Vai diretto al punto: hai studiato il programma, hai notato degli argomenti rilevanti, proponi il volume.
+
+${scenarioInstructions}
+
+REGOLE TASSATIVE:
+- Scrivi SOLO la mail, niente note o commenti.
+- Usa [LINK_ANTEPRIMA] come placeholder per il link (il promotore lo inserira).
+- Usa [CORSO DI LAUREA] come placeholder per il nome del corso (il promotore lo inserira).
+- NON inventare capitoli che non sono nell'indice fornito. Se non hai l'indice, cita solo gli argomenti.
+- NON aggiungere frasi generiche sul "digitale", "approccio innovativo" ecc. se non hai dati.
+- La mail deve essere 3 paragrafi massimo, concisa e diretta.
+- Rispondi in JSON: {"oggetto": "...", "corpo": "..."}`;
+
+    const userPrompt = `DATI PER LA MAIL:
+
+DOCENTE: ${nomeCompleto}
+ATENEO: ${target.ateneo || 'N/D'}
+CLASSE DI LAUREA: ${target.classe_laurea || 'N/D'}
+MATERIA: ${target.materia_inferita || mon.libro_materia || 'N/D'}
+MANUALE ATTUALE: ${manualeAttuale}${manualeEditore ? ' (' + manualeEditore + ')' : ''}
+SCENARIO: ${scenario}
+NOTA: NON conosci il nome del corso di laurea. Usa il placeholder [CORSO DI LAUREA] nella mail.
+
+ANALISI DELLA CATTEDRA:
+- Taglio del corso: ${taglio || 'Non disponibile'}
+- Gap e opportunita: ${gap || 'Non disponibili'}
+- Leve per il cambio:
+${leve || 'Non disponibili'}
+
+VOLUME DA PROPORRE:
+- Titolo: ${volumeOttimale.titolo || target.volume_consigliato || 'N/D'}
+- Autore: ${volumeOttimale.autore || target.volume_consigliato_autore || 'N/D'}
+- Materia: ${mon.libro_materia || 'N/D'}
+${indiceVolume ? '- Indice/Sommario:\n' + indiceVolume.substring(0, 3000) : '- Indice: non disponibile'}
+
+MOTIVAZIONE GIA GENERATA (usa come riferimento per i punti di forza):
+${target.motivazione_scelta || 'Nessuna'}
+
+Genera la mail di primo contatto.`;
+
+    const emailResult = await callOpenAI(systemPrompt, userPrompt, true);
+    showMonitoraggioEmailModal(target, emailResult, mon, volumeOttimale);
 
   } catch (e) {
     console.error('[Monitoraggio] Errore generazione email:', e);
@@ -1107,8 +1189,21 @@ Tono: cordiale, professionale, non invasivo. NO frasi generiche. NO elenchi punt
   }
 }
 
-function showEmailModal(target, emailText) {
-  // Controlla se esiste un modal generico oppure ne crea uno semplice
+function showMonitoraggioEmailModal(target, emailResult, mon, volumeOttimale) {
+  const oggetto = emailResult.oggetto || `${volumeOttimale.titolo || 'Nuovo volume'} — nuova pubblicazione Zanichelli`;
+  const corpo = emailResult.corpo || (typeof emailResult === 'string' ? emailResult : '');
+
+  // Badge scenario
+  const scenario = target.scenario_zanichelli || target.scenario || 'zanichelli_assente';
+  let scenarioBadge = '';
+  if (scenario === 'zanichelli_principale') {
+    scenarioBadge = '<span class="px-2 py-1 text-xs rounded-full bg-blue-100 text-blue-700 font-medium"><i class="fas fa-sync-alt mr-1"></i>Aggiornamento</span>';
+  } else if (scenario === 'zanichelli_alternativo') {
+    scenarioBadge = '<span class="px-2 py-1 text-xs rounded-full bg-purple-100 text-purple-700 font-medium"><i class="fas fa-arrow-up mr-1"></i>Upgrade</span>';
+  } else {
+    scenarioBadge = '<span class="px-2 py-1 text-xs rounded-full bg-green-100 text-green-700 font-medium"><i class="fas fa-flag mr-1"></i>Conquista</span>';
+  }
+
   let modal = document.getElementById('mon-email-modal');
   if (!modal) {
     modal = document.createElement('div');
@@ -1118,32 +1213,130 @@ function showEmailModal(target, emailText) {
   }
 
   modal.innerHTML = `
-    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[80vh] overflow-y-auto">
+    <div class="bg-white rounded-2xl shadow-2xl max-w-2xl w-full max-h-[90vh] overflow-y-auto">
       <div class="p-6 border-b">
         <div class="flex items-center justify-between">
           <h3 class="text-lg font-semibold text-gray-800">
             <i class="fas fa-envelope text-zanichelli-light mr-2"></i>Email per ${target.docente_nome || 'Docente'}
           </h3>
-          <button onclick="document.getElementById('mon-email-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600">
-            <i class="fas fa-times text-lg"></i>
-          </button>
+          <div class="flex items-center gap-2">
+            ${scenarioBadge}
+            <button onclick="document.getElementById('mon-email-modal').classList.add('hidden')" class="text-gray-400 hover:text-gray-600 ml-2">
+              <i class="fas fa-times text-lg"></i>
+            </button>
+          </div>
         </div>
-        <p class="text-sm text-gray-500 mt-1">${target.ateneo || ''} — ${target.volume_consigliato || ''}</p>
+        <p class="text-sm text-gray-500 mt-1">${target.ateneo || ''} — ${volumeOttimale.titolo || target.volume_consigliato || ''}</p>
       </div>
-      <div class="p-6">
-        <pre class="whitespace-pre-wrap text-sm text-gray-700 font-sans leading-relaxed">${emailText}</pre>
+      <div class="p-6 space-y-4">
+        <!-- Oggetto -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Oggetto</label>
+          <input type="text" id="mon-email-oggetto" value="${oggetto.replace(/"/g, '&quot;')}"
+                 class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none font-medium">
+        </div>
+
+        <!-- Link anteprima -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">
+            <i class="fas fa-link mr-1"></i>Link anteprima opera (sostituisce [LINK_ANTEPRIMA])
+          </label>
+          <input type="url" id="mon-email-link-anteprima" placeholder="https://www.zanichelli.it/ricerca/prodotti/..."
+                 class="w-full px-3 py-2 border rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none"
+                 oninput="updateMonEmailPreview()">
+        </div>
+
+        <!-- Corpo mail -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Corpo della mail</label>
+          <textarea id="mon-email-corpo" rows="14"
+                    class="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none leading-relaxed"
+                    oninput="updateMonEmailPreview()">${corpo}</textarea>
+        </div>
+
+        <!-- Firma -->
+        <div>
+          <label class="block text-xs font-medium text-gray-500 mb-1 uppercase tracking-wide">Firma</label>
+          <textarea id="mon-email-firma" rows="3"
+                    class="w-full px-3 py-2.5 border rounded-lg text-sm focus:ring-2 focus:ring-blue-400 outline-none text-gray-500"
+                    placeholder="Nome Cognome&#10;Promotore editoriale — Zanichelli&#10;Tel. ... | email@...">${localStorage.getItem('matrix_email_firma') || ''}</textarea>
+        </div>
       </div>
       <div class="p-4 border-t bg-gray-50 rounded-b-2xl flex justify-end gap-3">
-        <button onclick="navigator.clipboard.writeText(document.querySelector('#mon-email-modal pre').textContent).then(() => showToast('Email copiata!', 'success'))" class="px-4 py-2 bg-zanichelli-blue text-white rounded-lg text-sm hover:bg-zanichelli-dark transition-colors">
-          <i class="fas fa-copy mr-1"></i>Copia
+        <button onclick="copyMonEmail()"
+                class="flex-1 py-2.5 bg-zanichelli-blue text-white rounded-lg font-medium hover:bg-zanichelli-dark transition-colors">
+          <i class="fas fa-copy mr-2"></i>Copia tutto
         </button>
-        <button onclick="document.getElementById('mon-email-modal').classList.add('hidden')" class="px-4 py-2 bg-gray-200 text-gray-700 rounded-lg text-sm hover:bg-gray-300 transition-colors">
+        <button onclick="openMonMailto()"
+                class="px-5 py-2.5 bg-green-600 text-white rounded-lg font-medium hover:bg-green-700 transition-colors"
+                title="Apri nel client di posta">
+          <i class="fas fa-paper-plane mr-1"></i>Apri in Mail
+        </button>
+        <button onclick="document.getElementById('mon-email-modal').classList.add('hidden')"
+                class="px-5 py-2.5 bg-gray-100 text-gray-600 rounded-lg hover:bg-gray-200 transition-colors">
           Chiudi
         </button>
       </div>
     </div>`;
 
   modal.classList.remove('hidden');
+
+  // Salva firma per riutilizzo
+  const firmaEl = document.getElementById('mon-email-firma');
+  if (firmaEl) {
+    firmaEl.addEventListener('blur', () => {
+      localStorage.setItem('matrix_email_firma', firmaEl.value);
+    });
+  }
+
+  // Applica link se gia presente
+  updateMonEmailPreview();
+}
+
+function updateMonEmailPreview() {
+  const link = document.getElementById('mon-email-link-anteprima')?.value?.trim();
+  if (!link) return;
+
+  const corpoEl = document.getElementById('mon-email-corpo');
+  if (corpoEl && corpoEl.value.includes('[LINK_ANTEPRIMA]')) {
+    corpoEl.value = corpoEl.value.replace(/\[LINK_ANTEPRIMA\]/g, link);
+  }
+}
+
+function copyMonEmail() {
+  const oggetto = document.getElementById('mon-email-oggetto')?.value || '';
+  const corpo = document.getElementById('mon-email-corpo')?.value || '';
+  const firma = document.getElementById('mon-email-firma')?.value || '';
+
+  const fullEmail = `Oggetto: ${oggetto}\n\n${corpo}${firma ? '\n\n' + firma : ''}`;
+
+  navigator.clipboard.writeText(fullEmail).then(() => {
+    showToast('Email copiata negli appunti!', 'success');
+  }).catch(() => {
+    // Fallback
+    const textarea = document.createElement('textarea');
+    textarea.value = fullEmail;
+    document.body.appendChild(textarea);
+    textarea.select();
+    document.execCommand('copy');
+    document.body.removeChild(textarea);
+    showToast('Email copiata!', 'success');
+  });
+
+  // Salva firma
+  const firma2 = document.getElementById('mon-email-firma')?.value;
+  if (firma2) localStorage.setItem('matrix_email_firma', firma2);
+}
+
+function openMonMailto() {
+  const target = currentMonTargets?.find(t => t.docente_email);
+  const email = target?.docente_email || '';
+  const oggetto = encodeURIComponent(document.getElementById('mon-email-oggetto')?.value || '');
+  const corpo = encodeURIComponent(document.getElementById('mon-email-corpo')?.value || '');
+  const firma = encodeURIComponent(document.getElementById('mon-email-firma')?.value || '');
+
+  const body = corpo + (firma ? '%0A%0A' + firma : '');
+  window.open(`mailto:${email}?subject=${oggetto}&body=${body}`, '_blank');
 }
 
 // ===================================================
